@@ -141,9 +141,12 @@ private:
         TEST_CASE(getVariableFromVarIdBoundsCheck);
 
         TEST_CASE(hasRegularFunction);
+        TEST_CASE(hasRegularFunction_trailingReturnType);
         TEST_CASE(hasInlineClassFunction);
+        TEST_CASE(hasInlineClassFunction_trailingReturnType);
         TEST_CASE(hasMissingInlineClassFunction);
         TEST_CASE(hasClassFunction);
+        TEST_CASE(hasClassFunction_trailingReturnType);
 
         TEST_CASE(hasRegularFunctionReturningFunctionPointer);
         TEST_CASE(hasInlineClassFunctionReturningFunctionPointer);
@@ -248,6 +251,7 @@ private:
         TEST_CASE(enum4);
         TEST_CASE(enum5);
         TEST_CASE(enum6);
+        TEST_CASE(enum7);
 
         TEST_CASE(isImplicitlyVirtual);
         TEST_CASE(isPure);
@@ -847,7 +851,9 @@ private:
             const Scope *scope = findFunctionScopeByToken(db, tokenizer.tokens()->next());
 
             ASSERT(scope && scope->className == "func");
-            ASSERT(scope && scope->functionOf == 0);
+            if (!scope)
+                return;
+            ASSERT(scope->functionOf == 0);
 
             const Function *function = findFunctionByName("func", &db->scopeList.front());
 
@@ -856,6 +862,30 @@ private:
             ASSERT(function && function->hasBody());
             ASSERT(function && function->functionScope == scope && scope->function == function && function->nestedIn != scope);
             ASSERT(function && function->retDef == tokenizer.tokens());
+        }
+    }
+
+    void hasRegularFunction_trailingReturnType() {
+        GET_SYMBOL_DB("auto func() -> int { }")
+
+        // 2 scopes: Global and Function
+        ASSERT(db && db->scopeList.size() == 2);
+
+        if (db) {
+            const Scope *scope = findFunctionScopeByToken(db, tokenizer.tokens()->next());
+
+            ASSERT(scope && scope->className == "func");
+            if (!scope)
+                return;
+            ASSERT(scope->functionOf == 0);
+
+            const Function *function = findFunctionByName("func", &db->scopeList.front());
+
+            ASSERT(function && function->token->str() == "func");
+            ASSERT(function && function->token == tokenizer.tokens()->next());
+            ASSERT(function && function->hasBody());
+            ASSERT(function && function->functionScope == scope && scope->function == function && function->nestedIn != scope);
+            ASSERT(function && function->retDef == tokenizer.tokens()->tokAt(5));
         }
     }
 
@@ -871,7 +901,9 @@ private:
             const Scope *scope = findFunctionScopeByToken(db, functionToken);
 
             ASSERT(scope && scope->className == "func");
-            ASSERT(scope && scope->functionOf && scope->functionOf == db->findScopeByName("Fred"));
+            if (!scope)
+                return;
+            ASSERT(scope->functionOf && scope->functionOf == db->findScopeByName("Fred"));
 
             const Function *function = findFunctionByName("func", &db->scopeList.back());
 
@@ -880,6 +912,35 @@ private:
             ASSERT(function && function->hasBody() && function->isInline());
             ASSERT(function && function->functionScope == scope && scope->function == function && function->nestedIn == db->findScopeByName("Fred"));
             ASSERT(function && function->retDef == functionToken->previous());
+
+            ASSERT(db && db->findScopeByName("Fred") && db->findScopeByName("Fred")->definedType->getFunction("func") == function);
+        }
+    }
+
+
+    void hasInlineClassFunction_trailingReturnType() {
+        GET_SYMBOL_DB("class Fred { auto func() -> int { } };")
+
+        // 3 scopes: Global, Class, and Function
+        ASSERT(db && db->scopeList.size() == 3);
+
+        if (db) {
+            const Token * const functionToken = Token::findsimplematch(tokenizer.tokens(), "func");
+
+            const Scope *scope = findFunctionScopeByToken(db, functionToken);
+
+            ASSERT(scope && scope->className == "func");
+            if (!scope)
+                return;
+            ASSERT(scope->functionOf && scope->functionOf == db->findScopeByName("Fred"));
+
+            const Function *function = findFunctionByName("func", &db->scopeList.back());
+
+            ASSERT(function && function->token->str() == "func");
+            ASSERT(function && function->token == functionToken);
+            ASSERT(function && function->hasBody() && function->isInline());
+            ASSERT(function && function->functionScope == scope && scope->function == function && function->nestedIn == db->findScopeByName("Fred"));
+            ASSERT(function && function->retDef == functionToken->tokAt(4));
 
             ASSERT(db && db->findScopeByName("Fred") && db->findScopeByName("Fred")->definedType->getFunction("func") == function);
         }
@@ -918,7 +979,34 @@ private:
             const Scope *scope = findFunctionScopeByToken(db, functionToken);
 
             ASSERT(scope && scope->className == "func");
-            ASSERT(scope && scope->functionOf && scope->functionOf == db->findScopeByName("Fred"));
+            if (!scope)
+                return;
+            ASSERT(scope->functionOf && scope->functionOf == db->findScopeByName("Fred"));
+
+            const Function *function = findFunctionByName("func", &db->scopeList.back());
+
+            ASSERT(function && function->token->str() == "func");
+            ASSERT(function && function->token == functionToken);
+            ASSERT(function && function->hasBody() && !function->isInline());
+            ASSERT(function && function->functionScope == scope && scope->function == function && function->nestedIn == db->findScopeByName("Fred"));
+        }
+    }
+
+    void hasClassFunction_trailingReturnType() {
+        GET_SYMBOL_DB("class Fred { auto func() -> int; }; auto Fred::func() -> int { }\n");
+
+        // 3 scopes: Global, Class, and Function
+        ASSERT(db && db->scopeList.size() == 3);
+
+        if (db) {
+            const Token * const functionToken = Token::findsimplematch(tokenizer.tokens()->linkAt(2), "func");
+
+            const Scope *scope = findFunctionScopeByToken(db, functionToken);
+
+            ASSERT(scope && scope->className == "func");
+            if (!scope)
+                return;
+            ASSERT(scope->functionOf && scope->functionOf == db->findScopeByName("Fred"));
 
             const Function *function = findFunctionByName("func", &db->scopeList.back());
 
@@ -2469,6 +2557,54 @@ private:
         ASSERT(function->retType && function->retType->name() == "Enum");
     }
 
+#define TEST(S) \
+        v = db->getVariableFromVarId(id++); \
+        ASSERT(v != nullptr); \
+        if (!v) \
+            return; \
+        ASSERT(v->isArray()); \
+        ASSERT_EQUALS(1U, v->dimensions().size()); \
+        ASSERT_EQUALS(S, v->dimension(0))
+
+    void enum7() {
+        GET_SYMBOL_DB("enum E { X };\n"
+                      "enum EC : char { C };\n"
+                      "enum ES : short { S };\n"
+                      "enum EI : int { I };\n"
+                      "enum EL : long { L };\n"
+                      "enum ELL : long long { LL };\n"
+                      "char array1[sizeof(E)];\n"
+                      "char array2[sizeof(X)];\n"
+                      "char array3[sizeof(EC)];\n"
+                      "char array4[sizeof(C)];\n"
+                      "char array5[sizeof(ES)];\n"
+                      "char array6[sizeof(S)];\n"
+                      "char array7[sizeof(EI)];\n"
+                      "char array8[sizeof(I)];\n"
+                      "char array9[sizeof(EL)];\n"
+                      "char array10[sizeof(L)];\n"
+                      "char array11[sizeof(ELL)];\n"
+                      "char array12[sizeof(LL)];\n");
+        ASSERT(db);
+        if (!db)
+            return;
+        ASSERT(db->getVariableListSize() == 13); // the first one is not used
+        const Variable * v;
+        unsigned int id = 1;
+        TEST(settings.sizeof_int);
+        TEST(settings.sizeof_int);
+        TEST(1);
+        TEST(1);
+        TEST(settings.sizeof_short);
+        TEST(settings.sizeof_short);
+        TEST(settings.sizeof_int);
+        TEST(settings.sizeof_int);
+        TEST(settings.sizeof_long);
+        TEST(settings.sizeof_long);
+        TEST(settings.sizeof_long_long);
+        TEST(settings.sizeof_long_long);
+    }
+
     void isImplicitlyVirtual() {
         {
             GET_SYMBOL_DB("class Base {\n"
@@ -3501,6 +3637,7 @@ private:
 
         // function call..
         ASSERT_EQUALS("signed int", typeOf("int a(int); a(5);", "( 5"));
+        ASSERT_EQUALS("signed int", typeOf("auto a(int) -> int; a(5);", "( 5"));
         ASSERT_EQUALS("unsigned long", typeOf("sizeof(x);", "("));
 
         // struct member..

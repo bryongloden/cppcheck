@@ -1064,6 +1064,13 @@ public:
     /** Set valuetype in provided tokenlist */
     static void setValueTypeInTokenList(Token *tokens, bool cpp, char defaultSignedness, const Library* lib);
 
+    /**
+     * Calculates sizeof value for given type.
+     * @param type Token which will contain e.g. "int", "*", or string.
+     * @return sizeof for given type, or 0 if it can't be calculated.
+     */
+    unsigned int sizeOfType(const Token *type) const;
+
 private:
     friend class Scope;
     friend class Function;
@@ -1072,7 +1079,7 @@ private:
     Function *addGlobalFunctionDecl(Scope*& scope, const Token* tok, const Token *argStart, const Token* funcStart);
     Function *addGlobalFunction(Scope*& scope, const Token*& tok, const Token *argStart, const Token* funcStart);
     void addNewFunction(Scope **info, const Token **tok);
-    bool isFunction(const Token *tok, const Scope* outerScope, const Token **funcStart, const Token **argStart) const;
+    bool isFunction(const Token *tok, const Scope* outerScope, const Token **funcStart, const Token **argStart, const Token** declEnd) const;
     const Type *findTypeInNested(const Token *tok, const Scope *startScope) const;
     const Scope *findNamespace(const Token * tok, const Scope * scope) const;
     Function *findFunctionInScope(const Token *func, const Scope *ns);

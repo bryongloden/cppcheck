@@ -5662,19 +5662,30 @@ private:
 
     void simplifyCAlternativeTokens() {
         ASSERT_EQUALS("void f ( ) { if ( a && b ) { ; } }", tokenizeAndStringify("void f() { if (a and b); }", false, true, Settings::Native, "test.c"));
+        ASSERT_EQUALS("void f ( ) { if ( a && b ) { ; } }", tokenizeAndStringify("void f() { if (a and b); }", false, true, Settings::Native, "test.cpp"));
         ASSERT_EQUALS("void f ( ) { if ( a || b ) { ; } }", tokenizeAndStringify("void f() { if (a or b); }", false, true, Settings::Native, "test.c"));
+        ASSERT_EQUALS("void f ( ) { if ( a || b ) { ; } }", tokenizeAndStringify("void f() { if (a or b); }", false, true, Settings::Native, "test.cpp"));
         ASSERT_EQUALS("void f ( ) { if ( a & b ) { ; } }", tokenizeAndStringify("void f() { if (a bitand b); }", false, true, Settings::Native, "test.c"));
+        ASSERT_EQUALS("void f ( ) { if ( a & b ) { ; } }", tokenizeAndStringify("void f() { if (a bitand b); }", false, true, Settings::Native, "test.cpp"));
         ASSERT_EQUALS("void f ( ) { if ( a | b ) { ; } }", tokenizeAndStringify("void f() { if (a bitor b); }", false, true, Settings::Native, "test.c"));
+        ASSERT_EQUALS("void f ( ) { if ( a | b ) { ; } }", tokenizeAndStringify("void f() { if (a bitor b); }", false, true, Settings::Native, "test.cpp"));
         ASSERT_EQUALS("void f ( ) { if ( a ^ b ) { ; } }", tokenizeAndStringify("void f() { if (a xor b); }", false, true, Settings::Native, "test.c"));
+        ASSERT_EQUALS("void f ( ) { if ( a ^ b ) { ; } }", tokenizeAndStringify("void f() { if (a xor b); }", false, true, Settings::Native, "test.cpp"));
         ASSERT_EQUALS("void f ( ) { if ( ~ b ) { ; } }", tokenizeAndStringify("void f() { if (compl b); }", false, true, Settings::Native, "test.c"));
+        ASSERT_EQUALS("void f ( ) { if ( ~ b ) { ; } }", tokenizeAndStringify("void f() { if (compl b); }", false, true, Settings::Native, "test.cpp"));
         ASSERT_EQUALS("void f ( ) { if ( ! b ) { ; } }", tokenizeAndStringify("void f() { if (not b); }", false, true, Settings::Native, "test.c"));
+        ASSERT_EQUALS("void f ( ) { if ( ! b ) { ; } }", tokenizeAndStringify("void f() { if (not b); }", false, true, Settings::Native, "test.cpp"));
         ASSERT_EQUALS("void f ( ) { if ( a != b ) { ; } }", tokenizeAndStringify("void f() { if (a not_eq b); }", false, true, Settings::Native, "test.c"));
+        ASSERT_EQUALS("void f ( ) { if ( a != b ) { ; } }", tokenizeAndStringify("void f() { if (a not_eq b); }", false, true, Settings::Native, "test.cpp"));
         // #6201
         ASSERT_EQUALS("void f ( ) { if ( ! c || ! memcmp ( a , b , s ) ) { ; } }", tokenizeAndStringify("void f() { if (!c or !memcmp(a, b, s)); }", false, true, Settings::Native, "test.c"));
+        ASSERT_EQUALS("void f ( ) { if ( ! c || ! memcmp ( a , b , s ) ) { ; } }", tokenizeAndStringify("void f() { if (!c or !memcmp(a, b, s)); }", false, true, Settings::Native, "test.cpp"));
         // #6029
         ASSERT_EQUALS("void f ( ) { if ( ! b ) { } }", tokenizeAndStringify("void f() { if (not b){} }", false, true, Settings::Native, "test.c"));
+        ASSERT_EQUALS("void f ( ) { if ( ! b ) { } }", tokenizeAndStringify("void f() { if (not b){} }", false, true, Settings::Native, "test.cpp"));
         // #6207
         ASSERT_EQUALS("void f ( ) { if ( not = x ) { } }", tokenizeAndStringify("void f() { if (not=x){} }", false, true, Settings::Native, "test.c"));
+        ASSERT_EQUALS("void f ( ) { if ( not = x ) { } }", tokenizeAndStringify("void f() { if (not=x){} }", false, true, Settings::Native, "test.cpp"));
     }
 
     void simplifyCalculations() {
@@ -5709,6 +5720,8 @@ private:
         // ticket #3723 - Simplify condition (0 && a < 123)
         ASSERT_EQUALS("( 0 )",
                       tokenizeAndStringify("( 0 && a < 123 )", true));
+        ASSERT_EQUALS("( 0 )",
+                      tokenizeAndStringify("( 0 && a[123] )", true));
 
         // ticket #3964 - simplify numeric calculations in tokenization
         ASSERT_EQUALS("char a [ 10 ] ;", tokenizeAndStringify("char a[9+1];"));
