@@ -253,6 +253,8 @@ private:
         TEST_CASE(enum6);
         TEST_CASE(enum7);
 
+        TEST_CASE(sizeOfType);
+
         TEST_CASE(isImplicitlyVirtual);
         TEST_CASE(isPure);
 
@@ -2480,7 +2482,7 @@ private:
                       "int c[A + 2];\n"
                       "int d[10 + B];\n"
                       "int e[A + B];\n");
-        ASSERT(db);
+        ASSERT(db != nullptr);
         if (!db)
             return;
         ASSERT_EQUALS(2U, db->scopeList.size());
@@ -2541,15 +2543,15 @@ private:
                       "struct Barney : public Fred {\n"
                       "    Enum func(Enum e) { return e; }\n"
                       "};");
-        ASSERT(db);
+        ASSERT(db != nullptr);
         if (!db)
             return;
         const Token * const functionToken = Token::findsimplematch(tokenizer.tokens(), "func");
-        ASSERT(functionToken);
+        ASSERT(functionToken != nullptr);
         if (!functionToken)
             return;
         const Function *function = functionToken->function();
-        ASSERT(function);
+        ASSERT(function != nullptr);
         if (!function)
             return;
         ASSERT(function->token->str() == "func");
@@ -2585,7 +2587,7 @@ private:
                       "char array10[sizeof(L)];\n"
                       "char array11[sizeof(ELL)];\n"
                       "char array12[sizeof(LL)];\n");
-        ASSERT(db);
+        ASSERT(db != nullptr);
         if (!db)
             return;
         ASSERT(db->getVariableListSize() == 13); // the first one is not used
@@ -2603,6 +2605,17 @@ private:
         TEST(settings.sizeof_long);
         TEST(settings.sizeof_long_long);
         TEST(settings.sizeof_long_long);
+    }
+
+    void sizeOfType() {
+        // #7615 - crash in Symboldatabase::sizeOfType()
+        GET_SYMBOL_DB("enum e;\n"
+                      "void foo() {\n"
+                      "    e abc[] = {A,B,C};\n"
+                      "    int i = abc[ARRAY_SIZE(cats)];\n"
+                      "}");
+        const Token *e = Token::findsimplematch(tokenizer.tokens(), "e abc");
+        db->sizeOfType(e);  // <- don't crash
     }
 
     void isImplicitlyVirtual() {
@@ -3521,6 +3534,8 @@ private:
         ASSERT_EQUALS("unsigned long", typeOf("1UL", "1UL"));
         ASSERT_EQUALS("signed long long", typeOf("1LL", "1LL"));
         ASSERT_EQUALS("unsigned long long", typeOf("1ULL", "1ULL"));
+        ASSERT_EQUALS("signed long long", typeOf("1i64", "1i64"));
+        ASSERT_EQUALS("unsigned long long", typeOf("1ui64", "1ui64"));
         ASSERT_EQUALS("unsigned int", typeOf("1u", "1u"));
         ASSERT_EQUALS("signed long", typeOf("1l", "1l"));
         ASSERT_EQUALS("unsigned long", typeOf("1ul", "1ul"));
@@ -3625,6 +3640,9 @@ private:
         ASSERT_EQUALS("long double", typeOf("a = (long double)32;", "("));
         ASSERT_EQUALS("char", typeOf("a = static_cast<char>(32);", "("));
         ASSERT_EQUALS("", typeOf("a = (unsigned x)0;", "("));
+
+        // sizeof..
+        ASSERT_EQUALS("char", typeOf("sizeof(char)", "char"));
 
         // const..
         ASSERT_EQUALS("const char *", typeOf("a = \"123\";", "\"123\""));

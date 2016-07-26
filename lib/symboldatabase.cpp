@@ -1613,6 +1613,8 @@ void Variable::evaluate(const Library* lib)
             setFlag(fIsStatic, true);
         else if (tok->str() == "extern")
             setFlag(fIsExtern, true);
+        else if (tok->str() == "volatile")
+            setFlag(fIsVolatile, true);
         else if (tok->str() == "mutable")
             setFlag(fIsMutable, true);
         else if (tok->str() == "const")
@@ -2189,7 +2191,7 @@ const Token *Type::initBaseInfo(const Token *tok, const Token *tok1)
 const std::string& Type::name() const
 {
     const Token* next = classDef->next();
-    if (isEnumType() && classScope && classScope->enumClass)
+    if (classScope && classScope->enumClass && isEnumType())
         return next->strAt(1);
     else if (next->isName())
         return next->str();
@@ -3493,11 +3495,11 @@ const Type* SymbolDatabase::findVariableType(const Scope *start, const Token *ty
         }
 
         // type has a namespace
-        else {
+        else if (type->enclosingScope) {
             bool match = true;
             const Scope *scope = type->enclosingScope;
             const Token *typeTok2 = typeTok->tokAt(-2);
-            while (match && scope && Token::Match(typeTok2, "%any% ::")) {
+            do {
                 // A::B..
                 if (typeTok2->isName() && typeTok2->str().find(":") == std::string::npos) {
                     match &= bool(scope->className == typeTok2->str());
@@ -3508,7 +3510,7 @@ const Type* SymbolDatabase::findVariableType(const Scope *start, const Token *ty
                     match &= bool(scope->type == Scope::eGlobal);
                     break;
                 }
-            }
+            } while (match && scope && Token::Match(typeTok2, "%any% ::"));
 
             if (match)
                 return &(*type);
@@ -4087,7 +4089,7 @@ unsigned int SymbolDatabase::sizeOfType(const Token *type) const
 {
     unsigned int size = _tokenizer->sizeOfType(type);
 
-    if (size == 0 && type->type() && type->type()->isEnumType()) {
+    if (size == 0 && type->type() && type->type()->isEnumType() && type->type()->classScope) {
         size = _settings->sizeof_int;
         const Token * enum_type = type->type()->classScope->enumType;
         if (enum_type)
@@ -4410,12 +4412,16 @@ void SymbolDatabase::setValueTypeInTokenList(Token *tokens, bool cpp, char defau
                 ValueType::Type type = ValueType::Type::INT;
                 if (MathLib::isIntHex(tok->str()))
                     sign = ValueType::Sign::UNSIGNED;
-                for (unsigned int pos = tok->str().size() - 1U; pos > 0U && std::isalpha(tok->str()[pos]); --pos) {
+                for (std::size_t pos = tok->str().size() - 1U; pos > 0U; --pos) {
                     const char suffix = tok->str()[pos];
                     if (suffix == 'u' || suffix == 'U')
                         sign = ValueType::Sign::UNSIGNED;
-                    if (suffix == 'l' || suffix == 'L')
+                    else if (suffix == 'l' || suffix == 'L')
                         type = (type == ValueType::Type::INT) ? ValueType::Type::LONG : ValueType::Type::LONGLONG;
+                    else if (pos > 2U && suffix == '4' && tok->str()[pos - 1] == '6' && tok->str()[pos - 2] == 'i') {
+                        type = ValueType::Type::LONGLONG;
+                        pos -= 2;
+                    } else break;
                 }
                 ::setValueType(tok, ValueType(sign, type, 0U), cpp, defsign, lib);
             }
@@ -4466,6 +4472,13 @@ void SymbolDatabase::setValueTypeInTokenList(Token *tokens, bool cpp, char defau
                 ValueType valuetype(ValueType::Sign::UNSIGNED, ValueType::Type::LONG, 0U);
                 valuetype.originalTypeName = "size_t";
                 setValueType(tok, valuetype, cpp, defsign, lib);
+
+                if (Token::Match(tok, "( %type% %type%| *| *| )")) {
+                    ValueType vt;
+                    if (parsedecl(tok->next(), &vt, defsign, lib)) {
+                        setValueType(tok->next(), vt, cpp, defsign, lib);
+                    }
+                }
             }
         } else if (tok->variable()) {
             setValueType(tok, *tok->variable(), cpp, defsign, lib);

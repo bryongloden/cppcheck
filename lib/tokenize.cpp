@@ -1692,123 +1692,52 @@ bool Tokenizer::createTokens(std::istream &code,
     return list.createTokens(code, Path::getRelativePath(Path::simplifyPath(FileName), _settings->basePaths));
 }
 
-bool Tokenizer::simplifyTokens1(const std::string &configuration,
-                                bool noSymbolDB_AST)
+bool Tokenizer::simplifyTokens1(const std::string &configuration)
 {
     // Fill the map _typeSize..
     fillTypeSizes();
 
     _configuration = configuration;
 
-    if (simplifyTokenList1(list.getFiles()[0].c_str())) {
-        if (!noSymbolDB_AST) {
-            list.createAst();
-            list.validateAst();
+    if (!simplifyTokenList1(list.getFiles().front().c_str()))
+        return false;
 
-            createSymbolDatabase();
+    list.createAst();
+    list.validateAst();
 
-            // Use symbol database to identify rvalue references. Split && to & &. This is safe, since it doesn't delete any tokens (which might be referenced by symbol database)
-            for (std::size_t i = 0; i < _symbolDatabase->getVariableListSize(); i++) {
-                const Variable* var = _symbolDatabase->getVariableFromVarId(i);
-                if (var && var->isRValueReference()) {
-                    Token* endTok = const_cast<Token*>(var->typeEndToken());
-                    endTok->str("&");
-                    endTok->astOperand1(nullptr);
-                    endTok->astOperand2(nullptr);
-                    endTok->insertToken("&");
-                    endTok->next()->scope(endTok->scope());
-                }
-            }
+    createSymbolDatabase();
 
-            SymbolDatabase::setValueTypeInTokenList(list.front(), isCPP(), _settings->defaultSign, &_settings->library);
-            ValueFlow::setValues(&list, _symbolDatabase, _errorLogger, _settings);
+    // Use symbol database to identify rvalue references. Split && to & &. This is safe, since it doesn't delete any tokens (which might be referenced by symbol database)
+    for (std::size_t i = 0; i < _symbolDatabase->getVariableListSize(); i++) {
+        const Variable* var = _symbolDatabase->getVariableFromVarId(i);
+        if (var && var->isRValueReference()) {
+            Token* endTok = const_cast<Token*>(var->typeEndToken());
+            endTok->str("&");
+            endTok->astOperand1(nullptr);
+            endTok->astOperand2(nullptr);
+            endTok->insertToken("&");
+            endTok->next()->scope(endTok->scope());
         }
-
-        printDebugOutput(1);
-
-        return true;
     }
-    return false;
+
+    SymbolDatabase::setValueTypeInTokenList(list.front(), isCPP(), _settings->defaultSign, &_settings->library);
+    ValueFlow::setValues(&list, _symbolDatabase, _errorLogger, _settings);
+
+    printDebugOutput(1);
+
+    return true;
 }
 
 bool Tokenizer::tokenize(std::istream &code,
                          const char FileName[],
-                         const std::string &configuration,
-                         bool noSymbolDB_AST)
+                         const std::string &configuration)
 {
     if (!createTokens(code, FileName))
         return false;
 
-    return simplifyTokens1(configuration, noSymbolDB_AST);
+    return simplifyTokens1(configuration);
 }
 //---------------------------------------------------------------------------
-
-bool Tokenizer::tokenizeCondition(const std::string &code)
-{
-    assert(_settings);
-
-    // Fill the map _typeSize..
-    fillTypeSizes();
-
-    {
-        std::istringstream istr(code);
-        if (!list.createTokens(istr))
-            cppcheckError(nullptr);
-    }
-
-    // Combine strings
-    combineStrings();
-
-    // Remove "volatile", "inline", "register", and "restrict"
-    simplifyKeyword();
-
-    // Concatenate double sharp: 'a ## b' -> 'ab'
-    concatenateDoubleSharp();
-
-    // Link brackets (, [ and {
-    createLinks();
-
-    // Order keywords "static" and "const"
-    simplifyStaticConst();
-
-    // convert platform dependent types to standard types
-    // 32 bits: size_t -> unsigned long
-    // 64 bits: size_t -> unsigned long long
-    simplifyPlatformTypes();
-
-    // collapse compound standard types into a single token
-    // unsigned long long int => long (with _isUnsigned=true,_isLong=true)
-    simplifyStdType();
-
-    // replace 'NULL' and similar '0'-defined macros with '0'
-    simplifyNull();
-
-    // combine "- %num%"
-    concatenateNegativeNumberAndAnyPositive();
-
-    // simplify simple calculations
-    for (Token *tok = list.front() ? list.front()->next() : nullptr;
-         tok;
-         tok = tok->next()) {
-        if (tok->isNumber())
-            TemplateSimplifier::simplifyNumericCalculations(tok->previous());
-    }
-
-    combineOperators();
-
-    simplifyRedundantParentheses();
-    for (Token *tok = list.front();
-         tok;
-         tok = tok->next())
-        while (TemplateSimplifier::simplifyNumericCalculations(tok))
-            ;
-
-    simplifyCAlternativeTokens();
-
-    simplifyDoublePlusAndDoubleMinus();
-
-    return true;
-}
 
 void Tokenizer::findComplicatedSyntaxErrorsInTemplates()
 {
@@ -1949,26 +1878,6 @@ void Tokenizer::combineStrings()
             tok->concatStr(simplifyString(tok->next()->str()));
             tok->deleteNext();
         }
-    }
-}
-
-void Tokenizer::concatenateDoubleSharp()
-{
-    for (Token *tok = list.front(); tok; tok = tok->next()) {
-        while (Token::Match(tok, "%num%|%name% ## %num%|%name%")) {
-            tok->str(tok->str() + tok->strAt(2));
-            tok->deleteNext(2);
-        }
-    }
-}
-
-void Tokenizer::simplifyFileAndLineMacro()
-{
-    for (Token *tok = list.front(); tok; tok = tok->next()) {
-        if (tok->str() == "__FILE__")
-            tok->str("\"" + list.file(tok) + "\"");
-        else if (tok->str() == "__LINE__")
-            tok->str(MathLib::toString(tok->linenr()));
     }
 }
 
@@ -2732,11 +2641,13 @@ void Tokenizer::setVarIdPass1()
             }
         }
 
-        if (tok == list.front() || Token::Match(tok, "[;{}]") ||
-            (tok->str() == "(" && isFunctionHead(tok,"{")) ||
-            (tok->str() == "(" && !scopeStack.top().isExecutable && isFunctionHead(tok,";:")) ||
-            (tok->str() == "," && !scopeStack.top().isExecutable) ||
-            (tok->isName() && tok->str().at(tok->str().length()-1U) == ':')) {
+        if (!scopeStack.top().isStructInit &&
+            (tok == list.front() ||
+             Token::Match(tok, "[;{}]") ||
+             (tok->str() == "(" && isFunctionHead(tok,"{")) ||
+             (tok->str() == "(" && !scopeStack.top().isExecutable && isFunctionHead(tok,";:")) ||
+             (tok->str() == "," && !scopeStack.top().isExecutable) ||
+             (tok->isName() && tok->str().at(tok->str().length()-1U) == ':'))) {
 
             // No variable declarations in sizeof
             if (Token::simpleMatch(tok->previous(), "sizeof (")) {
@@ -3404,13 +3315,11 @@ bool Tokenizer::simplifyTokenList1(const char FileName[])
     // replace inline SQL with "asm()" (Oracle PRO*C). Ticket: #1959
     simplifySQL();
 
-    // replace __LINE__ macro with line number
-    simplifyFileAndLineMacro();
-
-    // Concatenate double sharp: 'a ## b' -> 'ab'
-    concatenateDoubleSharp();
-
     createLinks();
+
+    // Bail out if code is garbage
+    if (const Token *garbage = findGarbageCode())
+        syntaxError(garbage);
 
     // if (x) MACRO() ..
     for (const Token *tok = list.front(); tok; tok = tok->next()) {
@@ -8171,6 +8080,50 @@ void Tokenizer::validate() const
     // Validate that the Tokenizer::list.back() is updated correctly during simplifications
     if (lastTok != list.back())
         cppcheckError(lastTok);
+}
+
+
+const Token * Tokenizer::findGarbageCode() const
+{
+    for (const Token *tok = tokens(); tok; tok = tok->next()) {
+        if (Token::Match(tok, "if|while|for|switch")) { // if|while|for|switch (EXPR) { ... }
+            if (tok->previous() && !Token::Match(tok->previous(), "%name%|:|;|{|}|(|)|,"))
+                return tok;
+            if (Token::Match(tok->previous(), "[(,]"))
+                continue;
+            if (!Token::Match(tok->next(), "( !!)"))
+                return tok;
+            if (tok->str() != "for") {
+                if (isGarbageExpr(tok->next(), tok->linkAt(1)))
+                    return tok;
+            }
+        }
+    }
+    return nullptr;
+}
+
+bool Tokenizer::isGarbageExpr(const Token *start, const Token *end) const
+{
+    std::set<std::string> controlFlowKeywords;
+    controlFlowKeywords.insert("goto");
+    controlFlowKeywords.insert("do");
+    controlFlowKeywords.insert("if");
+    controlFlowKeywords.insert("else");
+    controlFlowKeywords.insert("for");
+    controlFlowKeywords.insert("while");
+    controlFlowKeywords.insert("switch");
+    controlFlowKeywords.insert("break");
+    controlFlowKeywords.insert("continue");
+    controlFlowKeywords.insert("return");
+    for (const Token *tok = start; tok != end; tok = tok->next()) {
+        if (controlFlowKeywords.find(tok->str()) != controlFlowKeywords.end())
+            return true;
+        if (tok->str() == ";")
+            return true;
+        if (tok->str() == "{")
+            tok = tok->link();
+    }
+    return false;
 }
 
 std::string Tokenizer::simplifyString(const std::string &source)

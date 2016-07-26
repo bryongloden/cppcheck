@@ -37,7 +37,6 @@ static const struct CWE CWE197(197U);   // Numeric Truncation Error
 static const struct CWE CWE369(369U);
 static const struct CWE CWE398(398U);   // Indicator of Poor Code Quality
 static const struct CWE CWE475(475U);   // Undefined Behavior for Input to API
-static const struct CWE CWE484(484U);   // Omitted Break Statement in Switch
 static const struct CWE CWE561(561U);   // Dead Code
 static const struct CWE CWE563(563U);   // Assignment to Variable without Use ('Unused Variable')
 static const struct CWE CWE570(570U);   // Expression is Always False
@@ -407,6 +406,13 @@ static bool nonLocal(const Variable* var)
     return !var || (!var->isLocal() && !var->isArgument()) || var->isStatic() || var->isReference();
 }
 
+static bool nonLocalVolatile(const Variable* var)
+{
+    if (var && var->isVolatile())
+        return false;
+    return nonLocal(var);
+}
+
 static void eraseNotLocalArg(std::map<unsigned int, const Token*>& container, const SymbolDatabase* symbolDatabase)
 {
     for (std::map<unsigned int, const Token*>::iterator i = container.begin(); i != container.end();) {
@@ -493,6 +499,33 @@ void CheckOther::checkRedundantAssignment()
                 varAssignments.clear();
                 memAssignments.clear();
             } else if (tok->tokType() == Token::eVariable && !Token::Match(tok, "%name% (")) {
+                const Token *eq = nullptr;
+                for (const Token *tok2 = tok; tok2; tok2 = tok2->next()) {
+                    if (Token::Match(tok2, "[([]")) {
+                        // bail out if there is a variable in rhs - we only track 1 variable
+                        bool bailout = false;
+                        for (const Token *tok3 = tok2->link(); tok3 != tok2; tok3 = tok3->previous()) {
+                            if (tok3->varId()) {
+                                if (!tok3->variable())
+                                    bailout = true;
+                                else {
+                                    const Variable *var = tok3->variable();
+                                    if (!var->isConst() || var->isReference() || var->isPointer())
+                                        bailout = true;
+                                }
+                            }
+                        }
+                        if (bailout)
+                            break;
+                        tok2 = tok2->link();
+                    } else if (Token::Match(tok2, "[)];,]"))
+                        break;
+                    else if (tok2->str() == "=") {
+                        eq = tok2;
+                        break;
+                    }
+                }
+
                 // Set initialization flag
                 if (!Token::Match(tok, "%var% ["))
                     initialized.insert(tok->varId());
@@ -512,19 +545,48 @@ void CheckOther::checkRedundantAssignment()
                 }
 
                 std::map<unsigned int, const Token*>::iterator it = varAssignments.find(tok->varId());
-                if (Token::simpleMatch(tok->next(), "=") && Token::Match(startToken, "[;{}]")) { // Assignment
+                if (eq && Token::Match(startToken, "[;{}]")) { // Assignment
                     if (it != varAssignments.end()) {
-                        bool error = true; // Ensure that variable is not used on right side
-                        for (const Token* tok2 = tok->tokAt(2); tok2; tok2 = tok2->next()) {
-                            if (tok2->str() == ";")
+                        const Token *oldeq = nullptr;
+                        for (const Token *tok2 = it->second; tok2; tok2 = tok2->next()) {
+                            if (Token::Match(tok2, "[([]"))
+                                tok2 = tok2->link();
+                            else if (Token::Match(tok2, "[)];,]"))
                                 break;
-                            else if (tok2->varId() == tok->varId()) {
+                            else if (Token::Match(tok2, "++|--|=")) {
+                                oldeq = tok2;
+                                break;
+                            }
+                        }
+                        if (!oldeq) {
+                            const Token *tok2 = it->second;
+                            while (Token::Match(tok2, "%name%|.|[|*|("))
+                                tok2 = tok2->astParent();
+                            if (Token::Match(tok2, "++|--"))
+                                oldeq = tok2;
+                        }
+
+                        // Ensure that LHS in assignments are the same
+                        bool error = oldeq && eq->astOperand1() && isSameExpression(_tokenizer->isCPP(), true, eq->astOperand1(), oldeq->astOperand1(), _settings->library.functionpure);
+
+                        // Ensure that variable is not used on right side
+                        std::stack<const Token *> tokens;
+                        tokens.push(eq->astOperand2());
+                        while (!tokens.empty()) {
+                            const Token *rhs = tokens.top();
+                            tokens.pop();
+                            if (!rhs)
+                                continue;
+                            tokens.push(rhs->astOperand1());
+                            tokens.push(rhs->astOperand2());
+                            if (rhs->varId() == tok->varId()) {
                                 error = false;
                                 break;
-                            } else if (Token::Match(tok2, "%name% (") && nonLocal(tok->variable())) { // Called function might use the variable
-                                const Function* const func = tok2->function();
+                            }
+                            if (Token::Match(rhs->previous(), "%name% (") && nonLocalVolatile(tok->variable())) { // Called function might use the variable
+                                const Function* const func = rhs->function();
                                 const Variable* const var = tok->variable();
-                                if (!var || var->isGlobal() || var->isReference() || ((!func || func->nestedIn) && tok2->strAt(-1) != ".")) {// Global variable, or member function
+                                if (!var || var->isGlobal() || var->isReference() || ((!func || func->nestedIn) && rhs->strAt(-1) != ".")) {// Global variable, or member function
                                     error = false;
                                     break;
                                 }
@@ -532,13 +594,13 @@ void CheckOther::checkRedundantAssignment()
                         }
                         if (error) {
                             if (printWarning && scope->type == Scope::eSwitch && Token::findmatch(it->second, "default|case", tok))
-                                redundantAssignmentInSwitchError(it->second, tok, tok->str());
+                                redundantAssignmentInSwitchError(it->second, tok, eq->astOperand1()->expressionString());
                             else if (printPerformance) {
                                 // See #7133
-                                const bool nonlocal = it->second->variable() && nonLocal(it->second->variable());
-                                if (printInconclusive || !nonlocal) // see #5089 - report inconclusive only when requested
+                                const bool nonlocal = it->second->variable() && nonLocalVolatile(it->second->variable());
+                                if (printInconclusive || !nonlocal) // report inconclusive only when requested
                                     if (_tokenizer->isC() || checkExceptionHandling(tok)) // see #6555 to see how exception handling might have an impact
-                                        redundantAssignmentError(it->second, tok, tok->str(), nonlocal); // Inconclusive for non-local variables
+                                        redundantAssignmentError(it->second, tok, eq->astOperand1()->expressionString(), nonlocal); // Inconclusive for non-local variables
                             }
                         }
                         it->second = tok;
@@ -788,79 +850,6 @@ void CheckOther::redundantBitwiseOperationInSwitchError(const Token *tok, const 
 {
     reportError(tok, Severity::warning,
                 "redundantBitwiseOperationInSwitch", "Redundant bitwise operation on '" + varname + "' in 'switch' statement. 'break;' missing?");
-}
-
-
-//---------------------------------------------------------------------------
-// Detect fall through cases (experimental).
-//---------------------------------------------------------------------------
-void CheckOther::checkSwitchCaseFallThrough()
-{
-    if (!(_settings->isEnabled("style") && _settings->experimental))
-        return;
-
-    const SymbolDatabase* const symbolDatabase = _tokenizer->getSymbolDatabase();
-
-    for (std::list<Scope>::const_iterator i = symbolDatabase->scopeList.begin(); i != symbolDatabase->scopeList.end(); ++i) {
-        if (i->type != Scope::eSwitch || !i->classStart) // Find the beginning of a switch
-            continue;
-
-        // Check the contents of the switch statement
-        std::stack<std::pair<Token *, bool> > ifnest;
-        bool justbreak = true;
-        bool firstcase = true;
-        for (const Token *tok2 = i->classStart; tok2 != i->classEnd; tok2 = tok2->next()) {
-            if (Token::simpleMatch(tok2, "if (")) {
-                tok2 = tok2->next()->link()->next();
-                ifnest.push(std::make_pair(tok2->link(), false));
-                justbreak = false;
-            } else if (Token::simpleMatch(tok2, "while (")) {
-                tok2 = tok2->next()->link()->next();
-                if (tok2->link()) // skip over "do { } while ( ) ;" case
-                    tok2 = tok2->link();
-                justbreak = false;
-            } else if (Token::simpleMatch(tok2, "do {")) {
-                tok2 = tok2->next()->link();
-                justbreak = false;
-            } else if (Token::simpleMatch(tok2, "for (")) {
-                tok2 = tok2->next()->link()->next()->link();
-                justbreak = false;
-            } else if (Token::simpleMatch(tok2, "switch (")) {
-                // skip over nested switch, we'll come to that soon
-                tok2 = tok2->next()->link()->next()->link();
-            } else if (Token::Match(tok2, "break|continue|return|exit|goto|throw")) {
-                justbreak = true;
-                tok2 = Token::findsimplematch(tok2, ";");
-            } else if (Token::Match(tok2, "case|default")) {
-                if (!justbreak && !firstcase) {
-                    switchCaseFallThrough(tok2);
-                }
-                tok2 = Token::findsimplematch(tok2, ":");
-                justbreak = true;
-                firstcase = false;
-            } else if (tok2->str() == "}") {
-                if (!ifnest.empty() && tok2 == ifnest.top().first) {
-                    if (tok2->next()->str() == "else") {
-                        tok2 = tok2->tokAt(2);
-                        ifnest.pop();
-                        ifnest.push(std::make_pair(tok2->link(), justbreak));
-                        justbreak = false;
-                    } else {
-                        justbreak &= ifnest.top().second;
-                        ifnest.pop();
-                    }
-                }
-            } else if (tok2->str() != ";") {
-                justbreak = false;
-            }
-        }
-    }
-}
-
-void CheckOther::switchCaseFallThrough(const Token *tok)
-{
-    reportError(tok, Severity::style,
-                "switchCaseFallThrough", "Switch falls through case without comment. 'break;' missing?", CWE484, false);
 }
 
 
