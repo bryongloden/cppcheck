@@ -105,9 +105,9 @@ public:
     }
 
     void flags() {
-        name = (str[0] == '_' || std::isalpha(str[0]));
+        name = (std::isalpha((unsigned char)str[0]) || str[0] == '_' || str[0] == '$');
         comment = (str.compare(0, 2, "//") == 0 || str.compare(0, 2, "/*") == 0);
-        number = std::isdigit(str[0]) || (str.size() > 1U && str[0] == '-' && std::isdigit(str[1]));
+        number = std::isdigit((unsigned char)str[0]) || (str.size() > 1U && str[0] == '-' && std::isdigit((unsigned char)str[1]));
         op = (str.size() == 1U) ? str[0] : '\0';
     }
 
@@ -120,9 +120,9 @@ public:
     bool startsWithOneOf(const char c[]) const;
     bool endsWithOneOf(const char c[]) const;
 
-    char op;
     const TokenString &str;
     TokenString macro;
+    char op;
     bool comment;
     bool name;
     bool number;
@@ -156,13 +156,15 @@ struct SIMPLECPP_LIB Output {
     enum Type {
         ERROR, /* #error */
         WARNING, /* #warning */
-        MISSING_INCLUDE
+        MISSING_HEADER,
+        INCLUDE_NESTED_TOO_DEEPLY,
+        SYNTAX_ERROR
     } type;
     Location location;
     std::string msg;
 };
 
-typedef std::list<struct Output> OutputList;
+typedef std::list<Output> OutputList;
 
 /** List of tokens. */
 class SIMPLECPP_LIB TokenList {
@@ -175,7 +177,7 @@ public:
 
     void clear();
     bool empty() const {
-        return !cbegin();
+        return !frontToken;
     }
     void push_back(Token *token);
 
@@ -187,20 +189,20 @@ public:
 
     void removeComments();
 
-    Token *begin() {
-        return first;
+    Token *front() {
+        return frontToken;
     }
 
-    const Token *cbegin() const {
-        return first;
+    const Token *cfront() const {
+        return frontToken;
     }
 
-    Token *end() {
-        return last;
+    Token *back() {
+        return backToken;
     }
 
-    const Token *cend() const {
-        return last;
+    const Token *cback() const {
+        return backToken;
     }
 
     void deleteToken(Token *tok) {
@@ -212,24 +214,24 @@ public:
             prev->next = next;
         if (next)
             next->previous = prev;
-        if (first == tok)
-            first = next;
-        if (last == tok)
-            last = prev;
+        if (frontToken == tok)
+            frontToken = next;
+        if (backToken == tok)
+            backToken = prev;
         delete tok;
     }
 
     void takeTokens(TokenList &other) {
-        if (!other.first)
+        if (!other.frontToken)
             return;
-        if (!first) {
-            first = other.first;
+        if (!frontToken) {
+            frontToken = other.frontToken;
         } else {
-            last->next = other.first;
-            other.first->previous = last;
+            backToken->next = other.frontToken;
+            other.frontToken->previous = backToken;
         }
-        last = other.last;
-        other.first = other.last = NULL;
+        backToken = other.backToken;
+        other.frontToken = other.backToken = NULL;
     }
 
     /** sizeof(T) */
@@ -248,12 +250,12 @@ private:
 
     std::string readUntil(std::istream &istr, const Location &location, const char start, const char end, OutputList *outputList);
 
-    std::string lastLine() const;
+    std::string lastLine(int maxsize=10) const;
 
     unsigned int fileIndex(const std::string &filename);
 
-    Token *first;
-    Token *last;
+    Token *frontToken;
+    Token *backToken;
     std::vector<std::string> &files;
 };
 
@@ -271,23 +273,25 @@ struct SIMPLECPP_LIB DUI {
     std::list<std::string> includePaths;
 };
 
-SIMPLECPP_LIB std::map<std::string, TokenList*> load(const TokenList &rawtokens, std::vector<std::string> &filenames, const struct DUI &dui, OutputList *outputList = 0);
+SIMPLECPP_LIB std::map<std::string, TokenList*> load(const TokenList &rawtokens, std::vector<std::string> &filenames, const DUI &dui, OutputList *outputList = 0);
 
 /**
  * Preprocess
- *
- * Preprocessing is done in two steps currently:
- *   const simplecpp::TokenList tokens1 = simplecpp::TokenList(f);
- *   const simplecpp::TokenList tokens2 = simplecpp::preprocess(tokens1, defines);
- *
- * The "tokens1" will contain tokens for comments and for preprocessor directives. And there is no preprocessing done.
- * This "tokens1" can be used if you need to see what comments/directives there are. Or what code is hidden in #if.
- *
- * The "tokens2" will have normal preprocessor output. No comments nor directives are seen.
- *
  * @todo simplify interface
+ * @param output TokenList that receives the preprocessing output
+ * @param rawtokens Raw tokenlist for top sourcefile
+ * @param files internal data of simplecpp
+ * @param filedata output from simplecpp::load()
+ * @param dui defines, undefs, and include paths
+ * @param outputList output: list that will receive output messages
+ * @param macroUsage output: macro usage
  */
-SIMPLECPP_LIB void preprocess(TokenList &output, const TokenList &rawtokens, std::vector<std::string> &files, const std::map<std::string, TokenList*> &filedata, const struct DUI &dui, OutputList *outputList = 0, std::list<struct MacroUsage> *macroUsage = 0);
+SIMPLECPP_LIB void preprocess(TokenList &output, const TokenList &rawtokens, std::vector<std::string> &files, const std::map<std::string, TokenList*> &filedata, const DUI &dui, OutputList *outputList = 0, std::list<MacroUsage> *macroUsage = 0);
+
+/**
+ * Deallocate data
+ */
+SIMPLECPP_LIB void cleanup(std::map<std::string, TokenList*> &filedata);
 }
 
 #endif

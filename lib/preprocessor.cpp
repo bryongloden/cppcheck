@@ -72,7 +72,7 @@ static void inlineSuppressions(const simplecpp::TokenList &tokens, Settings &_se
 {
     std::list<std::string> suppressionIDs;
 
-    for (const simplecpp::Token *tok = tokens.cbegin(); tok; tok = tok->next) {
+    for (const simplecpp::Token *tok = tokens.cfront(); tok; tok = tok->next) {
         if (tok->comment) {
             std::istringstream iss(tok->str.substr(2));
             std::string word;
@@ -130,7 +130,7 @@ void Preprocessor::setDirectives(const simplecpp::TokenList &tokens1)
     }
 
     for (std::list<const simplecpp::TokenList *>::const_iterator it = list.begin(); it != list.end(); ++it) {
-        for (const simplecpp::Token *tok = (*it)->cbegin(); tok; tok = tok ? tok->next : nullptr) {
+        for (const simplecpp::Token *tok = (*it)->cfront(); tok; tok = tok ? tok->next : nullptr) {
             if ((tok->op != '#') || (tok->previous && tok->previous->location.line == tok->location.line))
                 continue;
             if (tok->next && tok->next->str == "endfile")
@@ -231,12 +231,12 @@ static std::string cfg(const std::vector<std::string> &configs)
     return ret;
 }
 
-static void getConfigs(const simplecpp::TokenList &tokens, std::set<std::string> &defined, std::set<std::string> &ret)
+static void getConfigs(const simplecpp::TokenList &tokens, std::set<std::string> &defined, const std::set<std::string> &undefined, std::set<std::string> &ret)
 {
     std::vector<std::string> configs_if;
     std::vector<std::string> configs_ifndef;
 
-    for (const simplecpp::Token *tok = tokens.cbegin(); tok; tok = tok->next) {
+    for (const simplecpp::Token *tok = tokens.cfront(); tok; tok = tok->next) {
         if (tok->op != '#' || sameline(tok->previous, tok))
             continue;
         const simplecpp::Token *cmdtok = tok->next;
@@ -253,13 +253,18 @@ static void getConfigs(const simplecpp::TokenList &tokens, std::set<std::string>
             } else if (cmdtok->str == "if") {
                 config = readcondition(cmdtok, defined);
             }
+            if (undefined.find(config) != undefined.end())
+                config.clear();
             configs_if.push_back((cmdtok->str == "ifndef") ? std::string() : config);
             configs_ifndef.push_back((cmdtok->str == "ifndef") ? config : std::string());
             ret.insert(cfg(configs_if));
         } else if (cmdtok->str == "elif") {
             if (!configs_if.empty())
                 configs_if.pop_back();
-            configs_if.push_back(readcondition(cmdtok, defined));
+            std::string config = readcondition(cmdtok, defined);
+            if (undefined.find(config) != undefined.end())
+                config.clear();
+            configs_if.push_back(config);
             ret.insert(cfg(configs_if));
         } else if (cmdtok->str == "else") {
             if (!configs_if.empty())
@@ -284,16 +289,16 @@ std::set<std::string> Preprocessor::getConfigs(const simplecpp::TokenList &token
 {
     std::set<std::string> ret;
     ret.insert("");
-    if (!tokens.cbegin())
+    if (!tokens.cfront())
         return ret;
 
     std::set<std::string> defined;
     defined.insert("__cplusplus");
 
-    ::getConfigs(tokens, defined, ret);
+    ::getConfigs(tokens, defined, _settings.userUndefs, ret);
 
     for (std::map<std::string, simplecpp::TokenList*>::const_iterator it = tokenlists.begin(); it != tokenlists.end(); ++it)
-        ::getConfigs(*(it->second), defined, ret);
+        ::getConfigs(*(it->second), defined, _settings.userUndefs, ret);
 
     return ret;
 }
@@ -491,39 +496,23 @@ std::string Preprocessor::getcode(const simplecpp::TokenList &tokens1, const std
             return "";
         case simplecpp::Output::WARNING:
             break;
-        case simplecpp::Output::MISSING_INCLUDE: {
+        case simplecpp::Output::MISSING_HEADER: {
             const std::string::size_type pos1 = it->msg.find_first_of("<\"");
             const std::string::size_type pos2 = it->msg.find_first_of(">\"", pos1 + 1U);
             if (pos1 < pos2 && pos2 != std::string::npos)
                 missingInclude(it->location.file(), it->location.line, it->msg.substr(pos1+1, pos2-pos1-1), it->msg[pos1] == '\"' ? UserHeader : SystemHeader);
         }
         break;
+        case simplecpp::Output::INCLUDE_NESTED_TOO_DEEPLY:
+        case simplecpp::Output::SYNTAX_ERROR:
+            error(it->location.file(), it->location.line, it->msg);
+            return "";
         };
     }
 
     // ensure that guessed define macros without value are not used in the code
-    for (std::list<std::string>::const_iterator defineIt = dui.defines.begin(); defineIt != dui.defines.end(); ++defineIt) {
-        if (defineIt->find("=") != std::string::npos)
-            continue;
-        const std::string macroName = defineIt->substr(0, std::min(defineIt->find("="), defineIt->find("(")));
-        for (std::list<simplecpp::MacroUsage>::const_iterator usageIt = macroUsage.begin(); usageIt != macroUsage.end(); ++usageIt) {
-            const simplecpp::MacroUsage &mu = *usageIt;
-            if (mu.macroName != macroName)
-                continue;
-            bool directiveLocation = false;
-            for (std::list<Directive>::const_iterator dirIt = directives.begin(); dirIt != directives.end(); ++dirIt) {
-                if (mu.useLocation.file() == dirIt->file && mu.useLocation.line == dirIt->linenr) {
-                    directiveLocation = true;
-                    break;
-                }
-            }
-            if (!directiveLocation) {
-                if (_settings.isEnabled("information"))
-                    validateCfgError(cfg, macroName);
-                return "";
-            }
-        }
-    }
+    if (!validateCfg(cfg, macroUsage))
+        return "";
 
     // assembler code locations..
     std::set<simplecpp::Location> assemblerLocations;
@@ -559,7 +548,7 @@ std::string Preprocessor::getcode(const simplecpp::TokenList &tokens1, const std
     unsigned int prevfile = 0;
     unsigned int line = 1;
     std::ostringstream ret;
-    for (const simplecpp::Token *tok = tokens2.cbegin(); tok; tok = tok->next) {
+    for (const simplecpp::Token *tok = tokens2.cfront(); tok; tok = tok->next) {
         if (writeLocations && tok->location.fileIndex != prevfile) {
             ret << "\n#line " << tok->location.line << " \"" << tok->location.file() << "\"\n";
             prevfile = tok->location.fileIndex;
@@ -615,11 +604,13 @@ std::string Preprocessor::getcode(const std::string &filedata, const std::string
     for (simplecpp::OutputList::const_iterator it = outputList.begin(); it != outputList.end(); ++it) {
         switch (it->type) {
         case simplecpp::Output::ERROR:
+        case simplecpp::Output::INCLUDE_NESTED_TOO_DEEPLY:
+        case simplecpp::Output::SYNTAX_ERROR:
             error(it->location.file(), it->location.line, it->msg);
             return "";
         case simplecpp::Output::WARNING:
             break;
-        case simplecpp::Output::MISSING_INCLUDE: {
+        case simplecpp::Output::MISSING_HEADER: {
             const std::string::size_type pos1 = it->msg.find_first_of("<\"");
             const std::string::size_type pos2 = it->msg.find_first_of(">\"", pos1 + 1U);
             if (pos1 < pos2 && pos2 != std::string::npos)
@@ -679,72 +670,42 @@ void Preprocessor::missingInclude(const std::string &filename, unsigned int line
     }
 }
 
-bool Preprocessor::validateCfg(const std::string &code, const std::string &cfg)
+bool Preprocessor::validateCfg(const std::string &cfg, const std::list<simplecpp::MacroUsage> &macroUsageList)
 {
-    const bool printInformation = _settings.isEnabled("information");
-
-    // fill up "macros" with empty configuration macros
-    std::set<std::string> macros;
-    for (std::string::size_type pos = 0; pos < cfg.size();) {
-        const std::string::size_type pos2 = cfg.find_first_of(";=", pos);
-        if (pos2 == std::string::npos) {
-            macros.insert(cfg.substr(pos));
-            break;
-        }
-        if (cfg[pos2] == ';')
-            macros.insert(cfg.substr(pos, pos2-pos));
-        pos = cfg.find(';', pos2);
-        if (pos != std::string::npos)
-            ++pos;
-    }
-
-    // check if any empty macros are used in code
-    for (std::set<std::string>::const_iterator it = macros.begin(); it != macros.end(); ++it) {
-        const std::string &macro = *it;
-        std::string::size_type pos = 0;
-        while ((pos = code.find_first_of(std::string("#\"'")+macro[0], pos)) != std::string::npos) {
-            const std::string::size_type pos1 = pos;
-            const std::string::size_type pos2 = pos + macro.size();
-            pos++;
-
-            // skip string..
-            if (code[pos1] == '\"' || code[pos1] == '\'') {
-                while (pos < code.size() && code[pos] != code[pos1]) {
-                    if (code[pos] == '\\')
-                        ++pos;
-                    ++pos;
+    bool ret = true;
+    std::list<std::string> defines;
+    splitcfg(cfg, defines, std::string());
+    for (std::list<std::string>::const_iterator defineIt = defines.begin(); defineIt != defines.end(); ++defineIt) {
+        if (defineIt->find("=") != std::string::npos)
+            continue;
+        const std::string macroName(defineIt->substr(0, defineIt->find("(")));
+        for (std::list<simplecpp::MacroUsage>::const_iterator usageIt = macroUsageList.begin(); usageIt != macroUsageList.end(); ++usageIt) {
+            const simplecpp::MacroUsage &mu = *usageIt;
+            if (mu.macroName != macroName)
+                continue;
+            bool directiveLocation = false;
+            for (std::list<Directive>::const_iterator dirIt = directives.begin(); dirIt != directives.end(); ++dirIt) {
+                if (mu.useLocation.file() == dirIt->file && mu.useLocation.line == dirIt->linenr) {
+                    directiveLocation = true;
+                    break;
                 }
-                ++pos;
             }
-
-            // skip preprocessor statement..
-            else if (code[pos1] == '#') {
-                if (pos1 == 0 || code[pos1-1] == '\n')
-                    pos = code.find('\n', pos);
-            }
-
-            // is macro used in code?
-            else if (code.compare(pos1,macro.size(),macro) == 0) {
-                if (pos1 > 0 && (std::isalnum((unsigned char)code[pos1-1U]) || code[pos1-1U] == '_'))
-                    continue;
-                if (pos2 < code.size() && (std::isalnum((unsigned char)code[pos2]) || code[pos2] == '_'))
-                    continue;
-                // macro is used in code, return false
-                if (printInformation)
-                    validateCfgError(cfg, macro);
-                return false;
+            if (!directiveLocation) {
+                if (_settings.isEnabled("information"))
+                    validateCfgError(mu.useLocation.file(), mu.useLocation.line, cfg, macroName);
+                ret = false;
             }
         }
     }
 
-    return true;
+    return ret;
 }
 
-void Preprocessor::validateCfgError(const std::string &cfg, const std::string &macro)
+void Preprocessor::validateCfgError(const std::string &file, const unsigned int line, const std::string &cfg, const std::string &macro)
 {
     const std::string id = "ConfigurationNotChecked";
     std::list<ErrorLogger::ErrorMessage::FileLocation> locationList;
-    ErrorLogger::ErrorMessage::FileLocation loc(file0, 1);
+    ErrorLogger::ErrorMessage::FileLocation loc(file, line);
     locationList.push_back(loc);
     ErrorLogger::ErrorMessage errmsg(locationList, file0, Severity::information, "Skipping configuration '" + cfg + "' since the value of '" + macro + "' is unknown. Use -D if you want to check it. You can use -U to skip it explicitly.", id, false);
     _errorLogger->reportInfo(errmsg);
@@ -757,7 +718,7 @@ void Preprocessor::getErrorMessages(ErrorLogger *errorLogger, const Settings *se
     settings2.checkConfiguration=true;
     preprocessor.missingInclude("", 1, "", UserHeader);
     preprocessor.missingInclude("", 1, "", SystemHeader);
-    preprocessor.validateCfgError("X", "X");
+    preprocessor.validateCfgError("", 1, "X", "X");
     preprocessor.error("", 1, "#error message");   // #error ..
 }
 
