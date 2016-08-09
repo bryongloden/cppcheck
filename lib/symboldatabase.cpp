@@ -1088,19 +1088,19 @@ SymbolDatabase::SymbolDatabase(const Tokenizer *tokenizer, const Settings *setti
         if (start != end && start->next() != end) {
             for (Token* tok = start->next(); tok != end; tok = tok->next()) {
                 if (tok->str() == "{") {
-                    bool break2 = false;
+                    bool isEndOfScope = false;
                     for (std::list<Scope*>::const_iterator innerScope = it->nestedList.begin(); innerScope != it->nestedList.end(); ++innerScope) {
                         if (tok == (*innerScope)->classStart) { // Is begin of inner scope
                             tok = tok->link();
                             if (!tok || tok->next() == end || !tok->next()) {
-                                break2 = true;
+                                isEndOfScope = true;
                                 break;
                             }
                             tok = tok->next();
                             break;
                         }
                     }
-                    if (break2)
+                    if (isEndOfScope)
                         break;
                 }
                 tok->scope(&*it);
@@ -1725,7 +1725,7 @@ bool Function::argsMatch(const Scope *scope, const Token *first, const Token *se
                     return !first && !second;
                 }
             } else if (!first) { // End of argument list (first)
-                return second->next() && second->next()->str() == ")";
+                return !second->nextArgument(); // End of argument list (second)
             }
         } else if (second->next()->str() == "=") {
             second = second->nextArgument();
@@ -1767,8 +1767,8 @@ bool Function::argsMatch(const Scope *scope, const Token *first, const Token *se
             break;
 
         // variable names are different
-        else if ((Token::Match(first->next(), "%name% ,|)|=") &&
-                  Token::Match(second->next(), "%name% ,|)")) &&
+        else if ((Token::Match(first->next(), "%name% ,|)|=|[") &&
+                  Token::Match(second->next(), "%name% ,|)|[")) &&
                  (first->next()->str() != second->next()->str())) {
             // skip variable names
             first = first->next();
@@ -1817,9 +1817,9 @@ bool Function::argsMatch(const Scope *scope, const Token *first, const Token *se
         second = second->next();
 
         // skip "struct"
-        if (first->str() == "struct")
+        if (first->str() == "struct" || first->str() == "enum")
             first = first->next();
-        if (second->str() == "struct")
+        if (second->str() == "struct" || second->str() == "enum")
             second = second->next();
 
         // skip const on type passed by value
@@ -2402,7 +2402,7 @@ void SymbolDatabase::printVariable(const Variable *var, const char *indent) cons
     std::cout << indent << "    isStlType: " << var->isStlType() << std::endl;
     std::cout << indent << "_type: ";
     if (var->type()) {
-        std::cout << var->type()->name();
+        std::cout << var->type()->type() << " " << var->type()->name();
         std::cout << " " << _tokenizer->list.fileLine(var->type()->classDef);
         std::cout << " " << var->type() << std::endl;
     } else
@@ -2781,10 +2781,12 @@ void Function::addArguments(const SymbolDatabase *symbolDatabase, const Scope *s
                     return;
             } while (tok->str() != "," && tok->str() != ")" && tok->str() != "=");
 
-            const Token *typeTok = startTok->tokAt(startTok->str() == "const" ? 1 : 0);
-            if (typeTok->str() == "struct" || typeTok->str() == "enum")
+            const Token *typeTok = startTok;
+            // skip over stuff to get to type
+            while (Token::Match(typeTok, "const|enum|struct|::"))
                 typeTok = typeTok->next();
-            if (Token::Match(typeTok, "%type% ::"))
+            // skip over qualification
+            while (Token::Match(typeTok, "%type% ::"))
                 typeTok = typeTok->tokAt(2);
 
             // check for argument with no name or missing varid
@@ -2818,6 +2820,10 @@ void Function::addArguments(const SymbolDatabase *symbolDatabase, const Scope *s
                     tok = tok->next();
                 } while (tok->str() != "," && tok->str() != ")");
             }
+
+            // skip over stuff before type
+            while (Token::Match(startTok, "enum|struct|const"))
+                startTok = startTok->next();
 
             argumentList.push_back(Variable(nameTok, startTok, endTok, count++, Argument, argType, functionScope, &symbolDatabase->_settings->library));
 
@@ -3183,6 +3189,10 @@ const Token *Scope::checkVariable(const Token *tok, AccessControl varaccess, con
             const_cast<Token *>(typetok)->type(vType);
         }
 
+        // skip "enum" or "struct"
+        if (Token::Match(typestart, "enum|struct"))
+            typestart = typestart->next();
+
         addVariable(vartok, typestart, vartok->previous(), varaccess, vType, this, lib);
     }
 
@@ -3468,10 +3478,17 @@ const Type* SymbolDatabase::findVariableType(const Scope *start, const Token *ty
             }
         }
 
-        const Type * type = findVariableTypeInBase(scope, typeTok);
+        if (scope) {
+            const Type * type = scope->findType(typeTok->str());
 
-        if (type)
-            return type;
+            if (type)
+                return type;
+
+            type = findVariableTypeInBase(scope, typeTok);
+
+            if (type)
+                return type;
+        }
     }
 
     std::list<Type>::const_iterator type;
@@ -3496,8 +3513,27 @@ const Type* SymbolDatabase::findVariableType(const Scope *start, const Token *ty
                     break;
             }
 
-            if (type->enclosingScope == parent)
-                return &(*type);
+            if (type->enclosingScope == parent) {
+                // check if "enum" specified and type is enum
+                if (typeTok->strAt(-1) == "enum") {
+                    if (type->isEnumType())
+                        return &(*type);
+                    else // not an enum
+                        continue;
+                }
+
+                // check if "struct" specified and type is struct
+                else if (typeTok->strAt(-1) == "struct") {
+                    if (type->isStructType())
+                        return &(*type);
+                    else // not a struct
+                        continue;
+                }
+
+                // "enum" or "struct" not specified so assume match
+                else
+                    return &(*type);
+            }
         }
 
         // type has a namespace
@@ -3619,6 +3655,25 @@ const Function* Scope::findFunction(const Token *tok, bool requireConst) const
                     callarg->typeStartToken()->isUnsigned() == funcarg->typeStartToken()->isUnsigned() &&
                     callarg->typeStartToken()->isLong() == funcarg->typeStartToken()->isLong()) {
                     same++;
+                }
+            }
+
+            // check for a match with address of a variable
+            else if (Token::Match(arguments[j], "& %var% ,|)")) {
+                const Variable * callarg = check->getVariableFromVarId(arguments[j]->next()->varId());
+                if (callarg) {
+                    if (funcarg->typeEndToken()->str() == "*" &&
+                        (funcarg->typeStartToken()->str() == "void" ||
+                         (callarg->typeStartToken()->str() == funcarg->typeStartToken()->str() &&
+                          callarg->typeStartToken()->isUnsigned() == funcarg->typeStartToken()->isUnsigned() &&
+                          callarg->typeStartToken()->isLong() == funcarg->typeStartToken()->isLong()))) {
+                        same++;
+                    } else {
+                        // can't match so remove this function from possible matches
+                        matches.erase(matches.begin() + i);
+                        erased = true;
+                        break;
+                    }
                 }
             }
 
