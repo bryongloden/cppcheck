@@ -363,33 +363,42 @@ static void setTokenValue(Token* tok, const ValueFlow::Value &value)
     }
 
     else if (parent->str() == "?" && tok->str() == ":" && tok == parent->astOperand2()) {
-        // is condition only depending on 1 variable?
-        std::stack<const Token*> tokens;
-        tokens.push(parent->astOperand1());
-        unsigned int varId = 0;
-        while (!tokens.empty()) {
-            const Token *t = tokens.top();
-            tokens.pop();
-            if (!t)
-                continue;
-            tokens.push(t->astOperand1());
-            tokens.push(t->astOperand2());
-            if (t->varId()) {
-                if (varId > 0 || value.varId != 0U)
-                    return;
-                varId = t->varId();
-            } else if (t->str() == "(" && Token::Match(t->previous(), "%name%"))
-                return; // function call
+        // is condition always true/false?
+        if (parent->astOperand1()->values.size() == 1U && parent->astOperand1()->values.front().isKnown()) {
+            const ValueFlow::Value &condvalue = parent->astOperand1()->values.front();
+            const bool cond(condvalue.tokvalue || condvalue.intvalue != 0);
+            const std::list<ValueFlow::Value> &values = cond ? tok->astOperand1()->values : tok->astOperand2()->values;
+            if (std::find(values.begin(), values.end(), value) != values.end())
+                setTokenValue(parent, value);
+        } else {
+            // is condition only depending on 1 variable?
+            std::stack<const Token*> tokens;
+            tokens.push(parent->astOperand1());
+            unsigned int varId = 0;
+            while (!tokens.empty()) {
+                const Token *t = tokens.top();
+                tokens.pop();
+                if (!t)
+                    continue;
+                tokens.push(t->astOperand1());
+                tokens.push(t->astOperand2());
+                if (t->varId()) {
+                    if (varId > 0 || value.varId != 0U)
+                        return;
+                    varId = t->varId();
+                } else if (t->str() == "(" && Token::Match(t->previous(), "%name%"))
+                    return; // function call
+            }
+
+            ValueFlow::Value v(value);
+            v.conditional = true;
+            v.changeKnownToPossible();
+
+            if (varId)
+                v.varId = varId;
+
+            setTokenValue(parent, v);
         }
-
-        ValueFlow::Value v(value);
-        v.conditional = true;
-        v.changeKnownToPossible();
-
-        if (varId)
-            v.varId = varId;
-
-        setTokenValue(parent, v);
     }
 
     // Calculations..
@@ -517,6 +526,18 @@ static void setTokenValue(Token* tok, const ValueFlow::Value &value)
                 continue;
             ValueFlow::Value v(*it);
             v.intvalue = !v.intvalue;
+            setTokenValue(parent, v);
+        }
+    }
+
+    // unary minus
+    else if (parent->str() == "-" && !parent->astOperand2()) {
+        std::list<ValueFlow::Value>::const_iterator it;
+        for (it = tok->values.begin(); it != tok->values.end(); ++it) {
+            if (it->tokvalue)
+                continue;
+            ValueFlow::Value v(*it);
+            v.intvalue = -v.intvalue;
             setTokenValue(parent, v);
         }
     }
