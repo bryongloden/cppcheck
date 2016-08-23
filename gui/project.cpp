@@ -93,6 +93,8 @@ bool Project::Edit()
     dlg.SetDefines(defines);
     QStringList paths = mPFile->GetCheckPaths();
     dlg.SetPaths(paths);
+    QString importProject = mPFile->GetImportProject();
+    dlg.SetImportProject(importProject);
     QStringList ignorepaths = mPFile->GetExcludedPaths();
     dlg.SetExcludedPaths(ignorepaths);
     QStringList libraries = mPFile->GetLibraries();
@@ -104,6 +106,7 @@ bool Project::Edit()
     if (rv == QDialog::Accepted) {
         QString root = dlg.GetRootPath();
         mPFile->SetRootPath(root);
+        mPFile->SetImportProject(dlg.GetImportProject());
         QStringList includes = dlg.GetIncludePaths();
         mPFile->SetIncludes(includes);
         QStringList defines = dlg.GetDefines();

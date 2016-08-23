@@ -80,7 +80,7 @@ ifeq ($(CXX), clang++)
     CPPCHK_GLIBCXX_DEBUG=
 endif
 ifndef CXXFLAGS
-    CXXFLAGS=-include lib/cxx11emu.h -pedantic -Wall -Wextra -Wabi -Wcast-qual -Wfloat-equal -Winline -Wmissing-declarations -Wmissing-format-attribute -Wno-long-long -Wpacked -Wredundant-decls -Wshadow -Wno-missing-field-initializers -Wno-missing-braces -Wno-sign-compare -Wno-multichar $(CPPCHK_GLIBCXX_DEBUG) -g
+    CXXFLAGS=-include lib/cxx11emu.h -pedantic -Wall -Wextra -Wabi -Wcast-qual -Wfloat-equal -Wmissing-declarations -Wmissing-format-attribute -Wno-long-long -Wpacked -Wredundant-decls -Wshadow -Wno-missing-field-initializers -Wno-missing-braces -Wno-sign-compare -Wno-multichar $(CPPCHK_GLIBCXX_DEBUG) -g
 endif
 
 ifeq ($(CXX), g++)
@@ -386,7 +386,7 @@ $(SRCDIR)/cppcheck.o: lib/cppcheck.cpp lib/cxx11emu.h lib/cppcheck.h lib/config.
 $(SRCDIR)/errorlogger.o: lib/errorlogger.cpp lib/cxx11emu.h lib/errorlogger.h lib/config.h lib/suppressions.h lib/path.h lib/cppcheck.h lib/settings.h lib/library.h lib/mathlib.h lib/standards.h lib/platform.h lib/importproject.h lib/timer.h lib/check.h lib/token.h lib/valueflow.h lib/tokenize.h lib/tokenlist.h lib/utils.h
 	$(CXX) ${INCLUDE_FOR_LIB} $(CPPFLAGS) $(CFG) $(CXXFLAGS) $(UNDEF_STRICT_ANSI) -c -o $(SRCDIR)/errorlogger.o $(SRCDIR)/errorlogger.cpp
 
-$(SRCDIR)/importproject.o: lib/importproject.cpp lib/cxx11emu.h lib/importproject.h lib/config.h lib/platform.h lib/path.h lib/settings.h lib/library.h lib/mathlib.h lib/standards.h lib/errorlogger.h lib/suppressions.h lib/timer.h lib/tokenlist.h lib/token.h lib/valueflow.h
+$(SRCDIR)/importproject.o: lib/importproject.cpp lib/cxx11emu.h lib/importproject.h lib/config.h lib/platform.h lib/path.h lib/settings.h lib/library.h lib/mathlib.h lib/standards.h lib/errorlogger.h lib/suppressions.h lib/timer.h lib/tokenize.h lib/tokenlist.h lib/token.h lib/valueflow.h
 	$(CXX) ${INCLUDE_FOR_LIB} $(CPPFLAGS) $(CFG) $(CXXFLAGS) $(UNDEF_STRICT_ANSI) -c -o $(SRCDIR)/importproject.o $(SRCDIR)/importproject.cpp
 
 $(SRCDIR)/library.o: lib/library.cpp lib/cxx11emu.h lib/library.h lib/config.h lib/mathlib.h lib/standards.h lib/errorlogger.h lib/suppressions.h lib/path.h lib/tokenlist.h lib/token.h lib/valueflow.h lib/symboldatabase.h lib/astutils.h
@@ -521,7 +521,7 @@ test/testio.o: test/testio.cpp lib/cxx11emu.h lib/checkio.h lib/check.h lib/conf
 test/testleakautovar.o: test/testleakautovar.cpp lib/cxx11emu.h lib/tokenize.h lib/errorlogger.h lib/config.h lib/suppressions.h lib/tokenlist.h lib/checkleakautovar.h lib/check.h lib/token.h lib/valueflow.h lib/mathlib.h lib/settings.h lib/library.h lib/standards.h lib/platform.h lib/importproject.h lib/timer.h test/testsuite.h
 	$(CXX) ${INCLUDE_FOR_TEST} $(CPPFLAGS) $(CFG) $(CXXFLAGS) $(UNDEF_STRICT_ANSI) -c -o test/testleakautovar.o test/testleakautovar.cpp
 
-test/testlibrary.o: test/testlibrary.cpp lib/cxx11emu.h lib/library.h lib/config.h lib/mathlib.h lib/standards.h lib/errorlogger.h lib/suppressions.h lib/token.h lib/valueflow.h lib/tokenlist.h test/testsuite.h
+test/testlibrary.o: test/testlibrary.cpp lib/cxx11emu.h lib/library.h lib/config.h lib/mathlib.h lib/standards.h lib/errorlogger.h lib/suppressions.h lib/settings.h lib/platform.h lib/importproject.h lib/timer.h lib/token.h lib/valueflow.h lib/tokenlist.h lib/tokenize.h test/testsuite.h
 	$(CXX) ${INCLUDE_FOR_TEST} $(CPPFLAGS) $(CFG) $(CXXFLAGS) $(UNDEF_STRICT_ANSI) -c -o test/testlibrary.o test/testlibrary.cpp
 
 test/testmathlib.o: test/testmathlib.cpp lib/cxx11emu.h lib/mathlib.h lib/config.h test/testsuite.h lib/errorlogger.h lib/suppressions.h

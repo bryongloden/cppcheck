@@ -26,6 +26,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QFile>
+#include <QInputDialog>
 #include "mainwindow.h"
 #include "cppcheck.h"
 #include "applicationlist.h"
@@ -353,6 +354,44 @@ void MainWindow::SaveSettings() const
     mUI.mResults->SaveSettings(mSettings);
 }
 
+void MainWindow::DoCheckProject(ImportProject p)
+{
+    ClearResults();
+
+    mIsLogfileLoaded = false;
+    if (mProject) {
+        std::vector<std::string> v;
+        foreach (const QString &s, mProject->GetProjectFile()->GetExcludedPaths()) {
+            v.push_back(s.toStdString());
+        }
+        p.ignorePaths(v);
+    } else {
+        EnableProjectActions(false);
+    }
+
+    mUI.mResults->Clear(true);
+    mThread->ClearFiles();
+
+    mUI.mResults->CheckingStarted(p.fileSettings.size());
+
+    QDir inf(mCurrentDirectory);
+    const QString checkPath = inf.canonicalPath();
+    SetPath(SETTINGS_LAST_CHECK_PATH, checkPath);
+
+    CheckLockDownUI(); // lock UI while checking
+
+    mUI.mResults->SetCheckDirectory(checkPath);
+    Settings checkSettings = GetCppcheckSettings();
+    checkSettings.force = false;
+
+    if (mProject)
+        qDebug() << "Checking project file" << mProject->GetProjectFile()->GetFilename();
+
+    //mThread->SetCheckProject(true);
+    mThread->SetProject(p);
+    mThread->Check(checkSettings, true);
+}
+
 void MainWindow::DoCheckFiles(const QStringList &files)
 {
     if (files.isEmpty()) {
@@ -450,7 +489,7 @@ QStringList MainWindow::SelectFilesToCheck(QFileDialog::FileMode mode)
         selected = QFileDialog::getOpenFileNames(this,
                    tr("Select files to check"),
                    GetPath(SETTINGS_LAST_CHECK_PATH),
-                   tr("C/C++ Source (%1)").arg(FileList::GetDefaultFilters().join(" ")));
+                   tr("C/C++ Source, Visual Studio, Compile database (%1 *.sln *.vcxproj compile_database.json)").arg(FileList::GetDefaultFilters().join(" ")));
         if (selected.isEmpty())
             mCurrentDirectory.clear();
         else {
@@ -478,7 +517,34 @@ QStringList MainWindow::SelectFilesToCheck(QFileDialog::FileMode mode)
 
 void MainWindow::CheckFiles()
 {
-    DoCheckFiles(SelectFilesToCheck(QFileDialog::ExistingFiles));
+    QStringList selected = SelectFilesToCheck(QFileDialog::ExistingFiles);
+
+    const QString file0 = (selected.size() ? selected[0].toLower() : "");
+    if (file0.endsWith(".sln") || file0.endsWith(".vcxproj") || file0.endsWith("compile_database.json")) {
+        ImportProject p;
+        p.import(selected[0].toStdString());
+
+        if (file0.endsWith(".sln")) {
+            QStringList configs;
+            for (std::list<ImportProject::FileSettings>::const_iterator it = p.fileSettings.begin(); it != p.fileSettings.end(); ++it) {
+                const QString cfg(QString::fromStdString(it->cfg));
+                if (!configs.contains(cfg))
+                    configs.push_back(cfg);
+            }
+            configs.sort();
+
+            bool ok = false;
+            const QString cfg = QInputDialog::getItem(this, tr("Select configuration"), tr("Select the configuration that will be checked"), configs, 0, false, &ok);
+            if (!ok)
+                return;
+            p.ignoreOtherConfigs(cfg.toStdString());
+        }
+
+        DoCheckProject(p);
+        return;
+    }
+
+    DoCheckFiles(selected);
 }
 
 void MainWindow::CheckDirectory()
@@ -1229,6 +1295,14 @@ void MainWindow::CheckProject(Project *project)
         mCurrentDirectory = inf.canonicalPath() + rootpath.mid(1);
     else
         mCurrentDirectory = rootpath;
+
+    if (!project->GetProjectFile()->GetImportProject().isEmpty()) {
+        ImportProject p;
+        QString prjfile = inf.canonicalPath() + '/' + project->GetProjectFile()->GetImportProject();
+        p.import(prjfile.toStdString());
+        DoCheckProject(p);
+        return;
+    }
 
     QStringList paths = project->GetProjectFile()->GetCheckPaths();
 

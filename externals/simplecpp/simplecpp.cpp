@@ -33,6 +33,15 @@
 #include <iostream>
 #include <stack>
 
+#if defined(_WIN32) || defined(__CYGWIN__) || defined(__MINGW32__)
+#include <windows.h>
+#undef min
+#undef max
+#undef ERROR
+#undef TRUE
+#define SIMPLECPP_WINDOWS
+#endif
+
 namespace {
 const simplecpp::TokenString DEFINE("define");
 const simplecpp::TokenString UNDEF("undef");
@@ -1487,6 +1496,25 @@ private:
 
 
 namespace simplecpp {
+#ifdef SIMPLECPP_WINDOWS
+std::string realFilename(const std::string &f) {
+    WIN32_FIND_DATA FindFileData;
+    TCHAR buf[4096] = {0};
+    for (unsigned int i = 0; i < f.size(); ++i)
+        buf[i] = f[i];
+    HANDLE hFind = FindFirstFile(buf, &FindFileData);
+    if (hFind == INVALID_HANDLE_VALUE)
+        return f;
+    std::ostringstream ostr;
+    for (const TCHAR *c = FindFileData.cFileName; *c; c++) {
+        ostr << (char)*c;
+    }
+    FindClose(hFind);
+    return ostr.str();
+}
+#else
+#define realFilename(f)  f
+#endif
 
 /**
  * perform path simplifications for . and ..
@@ -1519,7 +1547,7 @@ std::string simplifyPath(std::string path) {
         }
     }
 
-    return path;
+    return realFilename(path);
 }
 }
 
@@ -1679,20 +1707,22 @@ std::map<std::string, simplecpp::TokenList*> simplecpp::load(const simplecpp::To
 
     // -include files
     for (std::list<std::string>::const_iterator it = dui.includes.begin(); it != dui.includes.end(); ++it) {
-        if (ret.find(*it) != ret.end())
+        const std::string &filename = realFilename(*it);
+
+        if (ret.find(filename) != ret.end())
             continue;
 
-        std::ifstream fin(it->c_str());
+        std::ifstream fin(filename.c_str());
         if (!fin.is_open())
             continue;
 
-        TokenList *tokenlist = new TokenList(fin, fileNumbers, *it, outputList);
+        TokenList *tokenlist = new TokenList(fin, fileNumbers, filename, outputList);
         if (!tokenlist->front()) {
             delete tokenlist;
             continue;
         }
 
-        ret[*it] = tokenlist;
+        ret[filename] = tokenlist;
         filelist.push_back(tokenlist->front());
     }
 
@@ -1717,7 +1747,7 @@ std::map<std::string, simplecpp::TokenList*> simplecpp::load(const simplecpp::To
 
         bool systemheader = (htok->str[0] == '<');
 
-        const std::string header(htok->str.substr(1U, htok->str.size() - 2U));
+        const std::string header(realFilename(htok->str.substr(1U, htok->str.size() - 2U)));
         if (hasFile(ret, sourcefile, header, dui, systemheader))
             continue;
 
@@ -1848,7 +1878,7 @@ void simplecpp::preprocess(simplecpp::TokenList &output, const simplecpp::TokenL
                 }
             } else if (ifstates.top() == TRUE && rawtok->str == INCLUDE) {
                 const bool systemheader = (rawtok->next->str[0] == '<');
-                const std::string header(rawtok->next->str.substr(1U, rawtok->next->str.size() - 2U));
+                const std::string header(realFilename(rawtok->next->str.substr(1U, rawtok->next->str.size() - 2U)));
                 const std::string header2 = getFileName(filedata, rawtok->location.file(), header, dui, systemheader);
                 if (header2.empty()) {
                     simplecpp::Output output(files);

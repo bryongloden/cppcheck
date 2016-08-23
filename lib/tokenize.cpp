@@ -1151,9 +1151,16 @@ void Tokenizer::simplifyTypedef()
                         }
                     } else {
                         if (tok2->strAt(-1) == "::") {
-                            // Don't replace this typename if it's preceded by "::" unless it's a namespace
-                            if (!spaceInfo.empty() && (tok2->strAt(-2) == spaceInfo[0].className) && spaceInfo[0].isNamespace) {
-                                tok2->tokAt(-3)->deleteNext(2);
+                            std::size_t relativeSpaceInfoSize = spaceInfo.size();
+                            Token * tokBeforeType = tok2->previous();
+                            while (relativeSpaceInfoSize != 0 &&
+                                   tokBeforeType && tokBeforeType->str() == "::" &&
+                                   tokBeforeType->strAt(-1) == spaceInfo[relativeSpaceInfoSize-1].className) {
+                                tokBeforeType = tokBeforeType->tokAt(-2);
+                                --relativeSpaceInfoSize;
+                            }
+                            if (tokBeforeType && tokBeforeType->str() != "::") {
+                                Token::eraseTokens(tokBeforeType, tok2);
                                 simplifyType = true;
                             }
                         } else if (Token::Match(tok2->previous(), "case|;|{|} %type% :")) {
@@ -8299,13 +8306,13 @@ void Tokenizer::simplifyStructDecl()
             continue;
         // check for anonymous struct/union
         if (Token::Match(tok, "struct|union {")) {
-            if (Token::Match(tok->next()->link(), "} *|&| %type% ,|;|[")) {
+            if (Token::Match(tok->next()->link(), "} *|&| %type% ,|;|[|(|{")) {
                 tok->insertToken("Anonymous" + MathLib::toString(count++));
             }
         }
         // check for anonymous enum
-        else if ((Token::simpleMatch(tok, "enum {") && Token::Match(tok->next()->link(), "} %type%| ,|;|[")) ||
-                 (Token::Match(tok, "enum : %type% {") && Token::Match(tok->linkAt(3), "} %type%| ,|;|["))) {
+        else if ((Token::simpleMatch(tok, "enum {") && Token::Match(tok->next()->link(), "} %type%| ,|;|[|(|{")) ||
+                 (Token::Match(tok, "enum : %type% {") && Token::Match(tok->linkAt(3), "} %type%| ,|;|[|(|{"))) {
             tok->insertToken("Anonymous" + MathLib::toString(count++));
         }
     }
@@ -8339,7 +8346,7 @@ void Tokenizer::simplifyStructDecl()
             Token *restart = next;
 
             // check for named type
-            if (Token::Match(tok->next(), "*|&| %type% ,|;|[|=")) {
+            if (Token::Match(tok->next(), "*|&| %type% ,|;|[|=|(|{")) {
                 tok->insertToken(";");
                 tok = tok->next();
                 while (!Token::Match(start, "struct|class|union|enum")) {
@@ -8350,8 +8357,25 @@ void Tokenizer::simplifyStructDecl()
                 if (!tok)
                     break; // see #4869 segmentation fault in Tokenizer::simplifyStructDecl (invalid code)
                 tok->insertToken(type->str());
-                if (start->str() != "class")
+                if (start->str() != "class") {
                     tok->insertToken(start->str());
+                    tok = tok->next();
+                }
+
+                tok = tok->tokAt(2);
+
+                // check for initialization
+                if (tok && (tok->next()->str() == "(" || tok->next()->str() == "{")) {
+                    tok->insertToken("=");
+                    tok = tok->next();
+
+                    if (start->str() == "enum") {
+                        if (tok->next()->str() == "{") {
+                            tok->next()->str("(");
+                            tok->linkAt(1)->str(")");
+                        }
+                    }
+                }
             }
 
             tok = restart;
@@ -9198,10 +9222,10 @@ void Tokenizer::simplifyQtSignalsSlots()
                 else
                     --indentlevel;
             }
-
-            if (tok2->strAt(1) == "Q_OBJECT") {
+            if (tok2->strAt(1) == "Q_OBJECT")
                 tok2->deleteNext();
-            } else if (Token::Match(tok2->next(), "public|protected|private slots|Q_SLOTS :")) {
+
+            if (Token::Match(tok2->next(), "public|protected|private slots|Q_SLOTS :")) {
                 tok2 = tok2->next();
                 tok2->str(tok2->str() + ":");
                 tok2->deleteNext(2);
