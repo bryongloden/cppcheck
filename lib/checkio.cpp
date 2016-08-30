@@ -40,6 +40,7 @@ static const CWE CWE664(664U);  // Improper Control of a Resource Through its Li
 static const CWE CWE685(685U);  // Function Call With Incorrect Number of Arguments
 static const CWE CWE686(686U);  // Function Call With Incorrect Argument Type
 static const CWE CWE687(687U);  // Function Call With Incorrectly Specified Argument Value
+static const CWE CWE704(704U);  // Incorrect Type Conversion or Cast
 static const CWE CWE910(910U);  // Use of Expired File Descriptor
 
 //---------------------------------------------------------------------------
@@ -69,7 +70,7 @@ void CheckIO::checkCoutCerrMisusage()
 
 void CheckIO::coutCerrMisusageError(const Token* tok, const std::string& streamName)
 {
-    reportError(tok, Severity::error, "coutCerrMisusage", "Invalid usage of output stream: '<< std::" + streamName + "'.");
+    reportError(tok, Severity::error, "coutCerrMisusage", "Invalid usage of output stream: '<< std::" + streamName + "'.", CWE398, false);
 }
 
 //---------------------------------------------------------------------------
@@ -1056,6 +1057,13 @@ void CheckIO::checkFormatString(const Token * const tok,
                                             invalidPrintfArgTypeError_int(tok, numFormat, specifier, &argInfo);
                                     } else {
                                         switch (specifier[0]) {
+                                        case 'h':
+                                            if (specifier[1] == 'h') {
+                                                if (argInfo.typeToken->str() != "char")
+                                                    invalidPrintfArgTypeError_int(tok, numFormat, specifier, &argInfo);
+                                            } else if (argInfo.typeToken->str() != "short")
+                                                invalidPrintfArgTypeError_int(tok, numFormat, specifier, &argInfo);
+                                            break;
                                         case 'l':
                                             if (specifier[1] == 'l') {
                                                 if (argInfo.typeToken->str() != "long" || !argInfo.typeToken->isLong())
@@ -1121,6 +1129,13 @@ void CheckIO::checkFormatString(const Token * const tok,
                                             invalidPrintfArgTypeError_sint(tok, numFormat, specifier, &argInfo);
                                     } else {
                                         switch (specifier[0]) {
+                                        case 'h':
+                                            if (specifier[1] == 'h') {
+                                                if (!(argInfo.typeToken->str() == "char" && !argInfo.typeToken->isUnsigned()))
+                                                    invalidPrintfArgTypeError_sint(tok, numFormat, specifier, &argInfo);
+                                            } else if (!(argInfo.typeToken->str() == "short" && !argInfo.typeToken->isUnsigned()))
+                                                invalidPrintfArgTypeError_sint(tok, numFormat, specifier, &argInfo);
+                                            break;
                                         case 'l':
                                             if (specifier[1] == 'l') {
                                                 if (argInfo.typeToken->str() != "long" || !argInfo.typeToken->isLong())
@@ -1191,6 +1206,13 @@ void CheckIO::checkFormatString(const Token * const tok,
                                             invalidPrintfArgTypeError_uint(tok, numFormat, specifier, &argInfo);
                                     } else {
                                         switch (specifier[0]) {
+                                        case 'h':
+                                            if (specifier[1] == 'h') {
+                                                if (!(argInfo.typeToken->str() == "char" && argInfo.typeToken->isUnsigned()))
+                                                    invalidPrintfArgTypeError_uint(tok, numFormat, specifier, &argInfo);
+                                            } else if (!(argInfo.typeToken->str() == "short" && argInfo.typeToken->isUnsigned()))
+                                                invalidPrintfArgTypeError_uint(tok, numFormat, specifier, &argInfo);
+                                            break;
                                         case 'l':
                                             if (specifier[1] == 'l') {
                                                 if (argInfo.typeToken->str() != "long" || !argInfo.typeToken->isLong())
@@ -1888,6 +1910,11 @@ static void printfFormatType(std::ostream& os, const std::string& specifier, boo
             os << (isUnsigned ? "unsigned " : "") << "long long";
         else
             os << (isUnsigned ? "unsigned " : "") << "long";
+    } else if (specifier[0] == 'h') {
+        if (specifier[1] == 'h')
+            os << (isUnsigned ? "unsigned " : "") << "char";
+        else
+            os << (isUnsigned ? "unsigned " : "") << "short";
     } else if (specifier.find("I32") != std::string::npos) {
         os << (isUnsigned ? "unsigned " : "") << "__int32";
     } else if (specifier.find("I64") != std::string::npos) {
@@ -1923,7 +1950,7 @@ void CheckIO::invalidPrintfArgTypeError_int(const Token* tok, unsigned int numFo
     errmsg << " but the argument type is ";
     argumentType(errmsg, argInfo);
     errmsg << ".";
-    reportError(tok, Severity::warning, "invalidPrintfArgType_int", errmsg.str());
+    reportError(tok, Severity::warning, "invalidPrintfArgType_int", errmsg.str(), CWE686, false);
 }
 void CheckIO::invalidPrintfArgTypeError_uint(const Token* tok, unsigned int numFormat, const std::string& specifier, const ArgumentInfo* argInfo)
 {
@@ -2019,7 +2046,7 @@ void CheckIO::invalidLengthModifierError(const Token* tok, unsigned int numForma
         return;
     std::ostringstream errmsg;
     errmsg << "'" << modifier << "' in format string (no. " << numFormat << ") is a length modifier and cannot be used without a conversion specifier.";
-    reportError(tok, Severity::warning, "invalidLengthModifierError", errmsg.str());
+    reportError(tok, Severity::warning, "invalidLengthModifierError", errmsg.str(), CWE704, false);
 }
 
 void CheckIO::invalidScanfFormatWidthError(const Token* tok, unsigned int numFormat, int width, const Variable *var, char c)
