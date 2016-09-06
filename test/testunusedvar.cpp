@@ -48,6 +48,7 @@ private:
         TEST_CASE(structmember10);
         TEST_CASE(structmember11); // #4168 - initialization with {} / passed by address to unknown function
         TEST_CASE(structmember12); // #7179 - FP unused structmember
+        TEST_CASE(structmember13); // #3088 - __attribute__((packed))
         TEST_CASE(structmember_sizeof);
 
         TEST_CASE(localvar1);
@@ -161,6 +162,7 @@ private:
         TEST_CASE(localvarAssignInWhile);
         TEST_CASE(localvarTemplate); // #4955 - variable is used as template parameter
         TEST_CASE(localvarFuncPtr); // #7194
+        TEST_CASE(localvarAddr); // #7477
 
         TEST_CASE(localvarCppInitialization);
         TEST_CASE(localvarCpp11Initialization);
@@ -418,6 +420,13 @@ private:
                                "    printf(\"var.struct1.a = %d\n\", var.struct1.a);\n"
                                "    return 1;\n"
                                "}\n");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void structmember13() { // #3088 - struct members required by hardware
+        checkStructMemberUsage("struct S {\n"
+                               "  int x;\n"
+                               "} __attribute__((packed));");
         ASSERT_EQUALS("", errout.str());
     }
 
@@ -3967,6 +3976,22 @@ private:
         functionVariableUsage("int main() {\n"
                               "    void(*funcPtr)(void) = x;\n"
                               "    funcPtr();\n"
+                              "}");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void localvarAddr() { // #7747
+        functionVariableUsage("void f() {\n"
+                              "  int x = 0;\n"
+                              "  dostuff(&x);\n"
+                              "  x = 1;\n"
+                              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        functionVariableUsage("void f() {\n"
+                              "  int x = 0;\n"
+                              "  dostuff(std::ref(x));\n"
+                              "  x = 1;\n"
                               "}");
         ASSERT_EQUALS("", errout.str());
     }
